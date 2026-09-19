@@ -57,7 +57,7 @@ curl http://localhost:19505/healthz
 | --- | --- | --- | --- |
 | `admin` | `admin123` | 样本库管理员 | 全部权限 |
 | `receiver` | `receive123` | 样本接收员 | 接收/更新/变更样本、发起交接 |
-| `custodian` | `custody123` | 冻存保管员 | 容器、样本状态、发起和处理交接 |
+| `custodian` | `custody123` | 冻存保管员 | 容器、样本状态、发起和处理交接、冷链异常处置 |
 | `reviewer` | `review123` | 协议复核员 | 协议复核、读取审计 |
 | `auditor` | `audit123` | 链路审计员 | 只读审计 |
 
@@ -94,6 +94,9 @@ docker compose down -v
 | `POST /api/custody-transfers/:id/resolve` | 接收、拒绝或取消交接 | `transfer:resolve` |
 | `GET /api/protocol-reviews[/:id]` | 查询协议复核 | 已登录 |
 | `POST /api/protocol-reviews` | 提交协议复核 | `protocol:review` |
+| `GET /api/temperature-anomalies[/:id]` | 查询冷链异常与隔离记录 | 已登录 |
+| `POST /api/temperature-anomalies` | 巡检提交超限读数，自动隔离容器内已冻存样本 | `coldchain:manage` |
+| `POST /api/temperature-anomalies/:id/resolve` | 非建单人填写依据后解除或判废 | `coldchain:manage` |
 | `GET /api/audit-logs` | 查询只追加审计事件 | `audit:read` |
 
 登录和创建容器示例：
@@ -110,6 +113,14 @@ curl -s http://localhost:19505/api/storage-containers \
 ```
 
 协议复核的 `documentObjectKey` 可留空；传入时，后端会到 `MINIO_BUCKET` 指定的 bucket 中确认对象真实存在。
+
+## 冷链异常隔离闭环
+
+1. 保管员在冻存页提交巡检读数；读数超出容器温区范围时生成冷链异常单（`TemperatureAnomaly`），同一冻存容器同时只允许一张未结异常（数据库部分唯一索引 + 容器级咨询锁）。
+2. 建单在同一事务内把容器内全部 `stored` 样本置为隔离（`Specimen.isolated`，并追加 `SpecimenIsolationEvent` 历史），自动取消指向或来自该容器的待处理交接；并发读数或交接受理由行锁、咨询锁和唯一索引兜底，不会重复建单或漏隔离。
+3. 隔离样本禁止发起/受理交接、禁止批准放行和销毁、禁止变更保管人；协议复核仍可暂缓或拒绝。
+4. 温度恢复不会自动解除：必须由非建单保管员选择“确认恢复（填写复核温度）”或“判定无效（误报）”，并提交至少 5 个字符的处理依据；复核温度仍超限或其他校验失败时事务回滚，异常与全部样本保持原状。
+5. 解除后样本恢复可交接/可放行，隔离事件保留在样本详情与样本抽屉中；冻存页显示未结异常状态和涉及样本数，刷新后仍可回读。
 
 ## 本地开发与校验
 
@@ -163,6 +174,8 @@ docker compose config --quiet
 
 - JWT 使用 HS256，并在后端路由执行 RBAC；前端导航、路由守卫和操作按钮同步权限，但后端仍是最终权限边界。
 - 交接受理使用事务和行锁，同时校验来源保管人、来源位置、目标容器容量、格位占用和温区。
+- 冷链巡检建单、样本隔离、待处理交接取消和审计写入在同一数据库事务内完成；容器级咨询锁始终按容器 ID 升序获取，避免与交接受理死锁，部分唯一索引保证“同一容器仅一张未结异常”。
+- 隔离解除同样走事务：非建单人校验、复核温度温区校验或依据校验任一失败都会整体回滚，异常与样本不会出现半解除状态。
 - 审计模型拒绝更新和删除，记录前后位置与责任人，并可验证整条 SHA-256 哈希链。
 - 请求日志不记录认证头或请求正文；全局错误处理中间件不会向客户端泄露内部错误。
 - Redis 提供全局限流；MinIO 承载并校验协议附件对象；所有依赖都由 Compose healthcheck 管理启动顺序。

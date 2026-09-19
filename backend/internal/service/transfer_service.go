@@ -57,6 +57,9 @@ func (s *transferService) Create(ctx context.Context, actor Actor, input dto.Cre
 	if specimen.State.Terminal() {
 		return nil, util.Conflict("已放行或已销毁样本不能发起交接")
 	}
+	if specimen.Isolated {
+		return nil, util.Conflict("样本处于冷链异常隔离中，禁止发起交接")
+	}
 	prepared, err := s.repo.CountPreparedForSpecimen(ctx, specimen.ID)
 	if err != nil {
 		return nil, err
@@ -94,7 +97,13 @@ func (s *transferService) Create(ctx context.Context, actor Actor, input dto.Cre
 	if err := item.Validate(); err != nil {
 		return nil, util.BadRequest(err.Error())
 	}
-	if err := s.repo.Create(ctx, item); err != nil {
+	if err := s.repo.CreateLocked(ctx, item); err != nil {
+		switch {
+		case errors.Is(err, repository.ErrSpecimenIsolated):
+			return nil, util.Conflict("样本已被冷链异常隔离，不能发起交接")
+		case errors.Is(err, repository.ErrSpecimenUnavailable):
+			return nil, util.Conflict("样本状态已变化，请刷新后重试")
+		}
 		return nil, err
 	}
 	if err := s.audit.Record(ctx, actor, "custody_transfer.prepared", "CustodyTransfer", item.ID, nil, item); err != nil {
@@ -168,8 +177,12 @@ func mapTransferError(err error) error {
 		return util.Conflict("交接已被其他请求处理")
 	case errors.Is(err, repository.ErrSpecimenCustodyChanged):
 		return util.Conflict("样本位置或保管人已变化，请重新发起交接")
+	case errors.Is(err, repository.ErrSpecimenIsolated):
+		return util.Conflict("样本处于冷链异常隔离中，不能处理交接")
 	case errors.Is(err, repository.ErrTargetContainerFull):
 		return util.Conflict("目标容器不可用或容量已满")
+	case errors.Is(err, repository.ErrTargetContainerQuarantined):
+		return util.Conflict("目标容器存在未结冷链异常，不能调入样本")
 	case errors.Is(err, repository.ErrPositionOccupied):
 		return util.Conflict("目标冻存位置已被占用")
 	case errors.Is(err, repository.ErrTemperatureExcursion):

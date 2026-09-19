@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"gorm.io/gorm"
+
 	"biosample-cold-custody-tracking/backend/internal/dto"
 	"biosample-cold-custody-tracking/backend/internal/model"
 	"biosample-cold-custody-tracking/backend/internal/repository"
@@ -20,6 +22,9 @@ type Actor struct {
 
 type AuditService interface {
 	Record(context.Context, Actor, string, string, uint, any, any) error
+	// RecordInTx appends a repository.AuditDraft-derived entry inside a caller
+	// transaction, keeping audit and business state atomic.
+	RecordInTx(context.Context, *gorm.DB, Actor, repository.AuditDraft) error
 	List(context.Context, repository.AuditFilter) (dto.PageResult[model.AuditLog], error)
 	Verify(context.Context) error
 }
@@ -31,23 +36,39 @@ func NewAuditService(repo repository.AuditRepository) AuditService {
 }
 
 func (s *auditService) Record(ctx context.Context, actor Actor, action, entityType string, entityID uint, before, after any) error {
+	entry, err := s.buildEntry(actor, action, entityType, entityID, before, after)
+	if err != nil {
+		return err
+	}
+	return s.repo.Append(ctx, entry)
+}
+
+func (s *auditService) RecordInTx(ctx context.Context, tx *gorm.DB, actor Actor, draft repository.AuditDraft) error {
+	entry, err := s.buildEntry(actor, draft.Action, draft.EntityType, draft.EntityID, draft.Before, draft.After)
+	if err != nil {
+		return err
+	}
+	return s.repo.AppendTx(ctx, tx, entry)
+}
+
+func (s *auditService) buildEntry(actor Actor, action, entityType string, entityID uint, before, after any) (*model.AuditLog, error) {
 	if actor.ID == 0 || strings.TrimSpace(actor.Name) == "" {
-		return fmt.Errorf("audit actor is required")
+		return nil, fmt.Errorf("audit actor is required")
 	}
 	if strings.TrimSpace(actor.RequestID) == "" {
-		return fmt.Errorf("audit request ID is required")
+		return nil, fmt.Errorf("audit request ID is required")
 	}
 	beforeJSON, err := auditJSON(before)
 	if err != nil {
-		return fmt.Errorf("serialize audit before state: %w", err)
+		return nil, fmt.Errorf("serialize audit before state: %w", err)
 	}
 	afterJSON, err := auditJSON(after)
 	if err != nil {
-		return fmt.Errorf("serialize audit after state: %w", err)
+		return nil, fmt.Errorf("serialize audit after state: %w", err)
 	}
 	beforeLocation, beforeCustodian := custodyCoordinates(before)
 	afterLocation, afterCustodian := custodyCoordinates(after)
-	entry := &model.AuditLog{
+	return &model.AuditLog{
 		RequestID:       actor.RequestID,
 		ActorID:         actor.ID,
 		ActorName:       strings.TrimSpace(actor.Name),
@@ -61,8 +82,7 @@ func (s *auditService) Record(ctx context.Context, actor Actor, action, entityTy
 		BeforeCustodian: beforeCustodian,
 		AfterCustodian:  afterCustodian,
 		IPAddress:       strings.TrimSpace(actor.IP),
-	}
-	return s.repo.Append(ctx, entry)
+	}, nil
 }
 
 func (s *auditService) List(ctx context.Context, filter repository.AuditFilter) (dto.PageResult[model.AuditLog], error) {

@@ -87,9 +87,43 @@ func Migrate(db *gorm.DB) error {
 		&model.Specimen{},
 		&model.CustodyTransfer{},
 		&model.ProtocolReview{},
+		&model.TemperatureAnomaly{},
+		&model.SpecimenIsolationEvent{},
 		&model.AuditLog{},
 	); err != nil {
 		return err
+	}
+	// At most one open anomaly per container. Historical resolved tickets remain.
+	const openAnomalyIndex = `
+DO $$
+BEGIN
+  IF NOT EXISTS (
+	SELECT 1 FROM pg_indexes WHERE indexname = 'idx_one_open_anomaly_per_container'
+  ) THEN
+	CREATE UNIQUE INDEX idx_one_open_anomaly_per_container
+	  ON temperature_anomalies (storage_container_id)
+	  WHERE state = 'open';
+  END IF;
+END;
+$$;`
+	if err := db.Exec(openAnomalyIndex).Error; err != nil {
+		return fmt.Errorf("create open anomaly unique index: %w", err)
+	}
+	// At most one active isolation episode per specimen.
+	const activeIsolationIndex = `
+DO $$
+BEGIN
+  IF NOT EXISTS (
+	SELECT 1 FROM pg_indexes WHERE indexname = 'idx_one_active_isolation_per_specimen'
+  ) THEN
+	CREATE UNIQUE INDEX idx_one_active_isolation_per_specimen
+	  ON specimen_isolation_events (specimen_id)
+	  WHERE active = true;
+  END IF;
+END;
+$$;`
+	if err := db.Exec(activeIsolationIndex).Error; err != nil {
+		return fmt.Errorf("create active isolation unique index: %w", err)
 	}
 	const immutableAuditFunction = `
 CREATE OR REPLACE FUNCTION reject_audit_log_mutation()

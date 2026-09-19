@@ -63,6 +63,9 @@ func (s *protocolService) Review(ctx context.Context, actor Actor, input dto.Cre
 	if prepared > 0 {
 		return nil, util.Conflict("样本仍有待处理交接，不能提交协议复核")
 	}
+	if specimen.Isolated && input.Decision == constants.DecisionApproved {
+		return nil, util.Conflict("样本处于冷链异常隔离中，禁止批准放行；可先暂缓或拒绝复核")
+	}
 	if input.Decision == constants.DecisionApproved && specimen.State != constants.SpecimenStateStored {
 		return nil, util.Conflict("只有已冻存样本可以批准放行")
 	}

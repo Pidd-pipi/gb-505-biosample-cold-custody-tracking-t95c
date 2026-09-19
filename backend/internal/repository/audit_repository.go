@@ -24,6 +24,7 @@ type AuditFilter struct {
 
 type AuditRepository interface {
 	Append(context.Context, *model.AuditLog) error
+	AppendTx(ctx context.Context, tx *gorm.DB, entry *model.AuditLog) error
 	List(context.Context, AuditFilter) ([]model.AuditLog, int64, error)
 	FindByRequestID(context.Context, string) ([]model.AuditLog, error)
 	VerifyChain(context.Context) error
@@ -37,27 +38,33 @@ func NewAuditRepository(db *gorm.DB) AuditRepository {
 
 func (r *auditRepository) Append(ctx context.Context, entry *model.AuditLog) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", auditChainLockID).Error; err != nil {
-			return fmt.Errorf("lock audit chain: %w", err)
-		}
-		var previous model.AuditLog
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Order("id DESC").First(&previous).Error
-		if err != nil && err != gorm.ErrRecordNotFound {
-			return fmt.Errorf("read audit chain head: %w", err)
-		}
-		if entry.CreatedAt.IsZero() {
-			entry.CreatedAt = time.Now().UTC()
-		}
-		previousHash := ""
-		if err == nil {
-			previousHash = previous.EntryHash
-		}
-		entry.Seal(previousHash)
-		if err := tx.Create(entry).Error; err != nil {
-			return fmt.Errorf("append audit entry: %w", err)
-		}
-		return nil
+		return r.AppendTx(ctx, tx, entry)
 	})
+}
+
+// AppendTx seals and stores an audit entry inside an existing transaction so
+// the audit event commits or rolls back together with the business change.
+func (r *auditRepository) AppendTx(ctx context.Context, tx *gorm.DB, entry *model.AuditLog) error {
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", auditChainLockID).Error; err != nil {
+		return fmt.Errorf("lock audit chain: %w", err)
+	}
+	var previous model.AuditLog
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Order("id DESC").First(&previous).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return fmt.Errorf("read audit chain head: %w", err)
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now().UTC()
+	}
+	previousHash := ""
+	if err == nil {
+		previousHash = previous.EntryHash
+	}
+	entry.Seal(previousHash)
+	if err := tx.Create(entry).Error; err != nil {
+		return fmt.Errorf("append audit entry: %w", err)
+	}
+	return nil
 }
 
 func (r *auditRepository) List(ctx context.Context, filter AuditFilter) ([]model.AuditLog, int64, error) {

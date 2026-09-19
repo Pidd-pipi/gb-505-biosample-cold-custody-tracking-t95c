@@ -81,7 +81,7 @@ func (r *protocolRepository) Create(ctx context.Context, review *model.ProtocolR
 			return ErrSpecimenNotReviewable
 		}
 		if review.Decision == constants.DecisionApproved {
-			if specimen.State != constants.SpecimenStateStored {
+			if specimen.Isolated || specimen.State != constants.SpecimenStateStored {
 				return ErrSpecimenNotReviewable
 			}
 			if specimen.StorageContainerID != nil {

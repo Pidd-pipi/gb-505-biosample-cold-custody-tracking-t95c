@@ -1,9 +1,11 @@
-import { PlusOutlined, SearchOutlined } from '@ant-design/icons'
-import { Button, Col, Form, Input, InputNumber, Modal, Progress, Row, Select, Space, Statistic, Typography, message } from 'antd'
+import { PlusOutlined, SearchOutlined, WarningOutlined } from '@ant-design/icons'
+import { Button, Col, Form, Input, InputNumber, Modal, Progress, Row, Select, Space, Statistic, Tag, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useEffect, useState } from 'react'
 import { storageAPI } from '../api'
+import { AnomalyPanel } from '../components/common/AnomalyPanel'
 import { EntityTable } from '../components/common/EntityTable'
+import { SpecimenIsolationTag } from '../components/common/IsolationBadge'
 import { StatusBadge } from '../components/common/StatusBadge'
 import { useAuth } from '../hooks/useAuth'
 import { usePagination } from '../hooks/usePagination'
@@ -18,6 +20,7 @@ export function StoragePage() {
   const [search, setSearch] = useState('')
   const [zone, setZone] = useState<string>()
   const [open, setOpen] = useState(false)
+  const [anomalyContainer, setAnomalyContainer] = useState<StorageContainer | null>(null)
   const [saving, setSaving] = useState(false)
   const [form] = Form.useForm()
   const refresh = () => load({ page: pagination.page, pageSize: pagination.pageSize, search, temperatureZone: zone })
@@ -33,19 +36,44 @@ export function StoragePage() {
     { title: '温区', dataIndex: 'temperatureZone', render: (value) => <StatusBadge value={value} /> },
     { title: '物理位置', dataIndex: 'location' },
     { title: '容量占用', width: 180, render: (_, row) => <Space direction="vertical" size={2} style={{ width: '100%' }}><span>{row.occupied} / {row.capacity}</span><Progress size="small" percent={row.capacity ? Math.round(row.occupied / row.capacity * 100) : 0} showInfo={false} status={row.occupied >= row.capacity ? 'exception' : 'normal'} /></Space> },
+    {
+      title: '冷链异常',
+      render: (_, row) => row.activeAnomaly
+        ? <Space direction="vertical" size={2}><Tag icon={<WarningOutlined />} color="error">未结异常</Tag><small className="cell-subtitle">{row.activeAnomaly.anomalyNo} · {row.activeAnomaly.recordedC}°C</small>{row.isolatedSpecimenCount > 0 && <SpecimenIsolationTag specimen={{ isolated: true }} />}<small className="cell-subtitle">涉及样本 {row.isolatedSpecimenCount} 份</small></Space>
+        : <StatusBadge value="anomaly_resolved" />,
+    },
     { title: '运行状态', dataIndex: 'status', render: (value) => <StatusBadge value={value} dot /> },
     { title: '启用', dataIndex: 'active', render: (value) => value ? '启用' : '停用' },
     { title: '最近更新', dataIndex: 'updatedAt', render: formatDateTime },
+    {
+      title: '操作', fixed: 'right',
+      render: (_, row) => <Button size="small" type={row.activeAnomaly ? 'primary' : 'default'} danger={Boolean(row.activeAnomaly)} icon={<WarningOutlined />} onClick={() => setAnomalyContainer(row)}>
+        {row.activeAnomaly ? '处理异常' : '冷链巡检'}
+      </Button>,
+    },
   ]
+  const openAnomalyCount = data.items.filter((item) => item.activeAnomaly).length
+  const isolatedTotal = data.items.reduce((sum, item) => sum + item.isolatedSpecimenCount, 0)
   return (
     <div className="page-stack">
-      <header className="page-header"><div><Typography.Title level={2}>冻存位置</Typography.Title><Typography.Text type="secondary">管理冷冻柜、液氮罐及其温区、容量与物理位置</Typography.Text></div>{can('storage:write') && <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新增容器</Button>}</header>
-      <Row gutter={16}><Col xs={24} sm={8}><div className="metric"><Statistic title="容器总数" value={data.total} /></div></Col><Col xs={24} sm={8}><div className="metric"><Statistic title="可用容器" value={data.items.filter((item) => item.active && item.status === 'available').length} /></div></Col><Col xs={24} sm={8}><div className="metric"><Statistic title="需关注" value={data.items.filter((item) => item.status !== 'available').length} /></div></Col></Row>
+      <header className="page-header"><div><Typography.Title level={2}>冻存位置</Typography.Title><Typography.Text type="secondary">管理冷冻柜、液氮罐及其温区、容量与物理位置；巡检超限自动隔离容器内已冻存样本</Typography.Text></div>{can('storage:write') && <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新增容器</Button>}</header>
+      <Row gutter={16}>
+        <Col xs={24} sm={8}><div className="metric"><Statistic title="容器总数" value={data.total} /></div></Col>
+        <Col xs={24} sm={8}><div className="metric"><Statistic title="未结冷链异常" value={openAnomalyCount} valueStyle={{ color: openAnomalyCount ? '#cf1322' : undefined }} /></div></Col>
+        <Col xs={24} sm={8}><div className="metric"><Statistic title="隔离中样本" value={isolatedTotal} valueStyle={{ color: isolatedTotal ? '#cf1322' : undefined }} /></div></Col>
+      </Row>
       <div className="table-toolbar"><Input allowClear prefix={<SearchOutlined />} placeholder="搜索容器编码、名称或位置" value={search} onChange={(event) => setSearch(event.target.value)} onPressEnter={() => void refresh()} /><Select allowClear placeholder="全部温区" value={zone} onChange={setZone} options={Object.entries(temperatureLabels).map(([value, label]) => ({ value, label }))} /><Button onClick={() => void refresh()}>查询</Button></div>
       <EntityTable columns={columns} dataSource={data.items} loading={loading} emptyTitle="尚未配置冻存容器" pagination={{ current: pagination.page, pageSize: pagination.pageSize, total: data.total, onChange: pagination.update, showSizeChanger: true }} />
       <Modal title="新增冻存容器" width={640} open={open} confirmLoading={saving} onOk={() => void create()} onCancel={() => setOpen(false)} okText="创建" cancelText="取消">
         <Form form={form} layout="vertical" initialValues={{ status: 'available' }}><Row gutter={16}><Col span={12}><Form.Item name="code" label="容器编码" rules={[{ required: true, min: 2 }]}><Input placeholder="ULT-80-A01" /></Form.Item></Col><Col span={12}><Form.Item name="name" label="容器名称" rules={[{ required: true }]}><Input /></Form.Item></Col></Row><Row gutter={16}><Col span={12}><Form.Item name="containerType" label="容器类型" rules={[{ required: true }]}><Select options={[{ value: 'freezer', label: '冷冻柜' }, { value: 'cryotank', label: '液氮罐' }, { value: 'rack', label: '冻存架' }]} /></Form.Item></Col><Col span={12}><Form.Item name="temperatureZone" label="温区" rules={[{ required: true }]}><Select options={Object.entries(temperatureLabels).map(([value, label]) => ({ value, label }))} /></Form.Item></Col></Row><Form.Item name="location" label="物理位置" rules={[{ required: true }]}><Input placeholder="样本库 A 区 / 第 2 排" /></Form.Item><Row gutter={16}><Col span={12}><Form.Item name="capacity" label="总容量" rules={[{ required: true }]}><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item name="status" label="运行状态" rules={[{ required: true }]}><Select options={[{ value: 'available', label: '可用' }, { value: 'maintenance', label: '维护中' }, { value: 'alarm', label: '温度告警' }]} /></Form.Item></Col></Row></Form>
       </Modal>
+      <AnomalyPanel
+        container={anomalyContainer}
+        open={Boolean(anomalyContainer)}
+        onClose={() => setAnomalyContainer(null)}
+        onChanged={() => { void refresh() }}
+        onContainerReload={(reloaded) => setAnomalyContainer(reloaded)}
+      />
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { specimenAPI, storageAPI, transferAPI } from '../api'
 import { CustodyBadge } from '../components/common/CustodyBadge'
 import { CustodyTimeline } from '../components/common/CustodyTimeline'
 import { EntityTable } from '../components/common/EntityTable'
+import { SpecimenIsolationTag } from '../components/common/IsolationBadge'
 import { useAuth } from '../hooks/useAuth'
 import { usePagination } from '../hooks/usePagination'
 import { useTransferStore } from '../stores/transferStore'
@@ -33,8 +34,8 @@ export function TransfersPage() {
   useEffect(() => { void refresh() }, [pagination.page, pagination.pageSize, state])
   useEffect(() => {
     void Promise.all([specimenAPI.list({ page: 1, pageSize: 100 }), storageAPI.list({ page: 1, pageSize: 100 })]).then(([sampleResult, storageResult]) => {
-      setSpecimens(sampleResult.items.filter((item) => !['disposed', 'released'].includes(item.state)))
-      setContainers(storageResult.items.filter((item) => item.active && item.status === 'available' && item.occupied < item.capacity))
+      setSpecimens(sampleResult.items.filter((item) => !['disposed', 'released'].includes(item.state) && !item.isolated))
+      setContainers(storageResult.items.filter((item) => item.active && item.status === 'available' && item.occupied < item.capacity && !item.activeAnomaly))
     })
   }, [])
   const create = async () => {
@@ -60,13 +61,13 @@ export function TransfersPage() {
     : 'intake'
   const columns: ColumnsType<CustodyTransfer> = [
     { title: '交接单号', dataIndex: 'transferNo', fixed: 'left' },
-    { title: '样本', render: (_, row) => <div><strong>{row.specimen?.accessionNo || row.specimenId}</strong><small className="cell-subtitle">{row.specimen?.sampleType}</small></div> },
+    { title: '样本', render: (_, row) => <div><strong>{row.specimen?.accessionNo || row.specimenId}</strong><small className="cell-subtitle">{row.specimen?.sampleType}</small>{row.specimen?.isolated && <SpecimenIsolationTag specimen={row.specimen} />}</div> },
     { title: '状态', dataIndex: 'state', render: (value) => <CustodyBadge state={value} /> },
     { title: '交接人', render: (_, row) => `${row.fromCustodian} → ${row.toCustodian}` },
     { title: '位置变化', render: (_, row) => <div>{row.fromLocation}<small className="cell-subtitle">→ {row.toLocation}</small></div> },
     { title: '温度', dataIndex: 'temperatureC', render: (value) => value == null ? '-' : `${value} °C` },
     { title: '发起人/时间', render: (_, row) => <div>{row.preparedByName}<small className="cell-subtitle">{formatDateTime(row.preparedAt)}</small></div> },
-    { title: '操作', fixed: 'right', render: (_, row) => <Space><Button size="small" icon={<HistoryOutlined />} onClick={() => void showTimeline(row)}>链路</Button>{row.state === 'prepared' && can('transfer:resolve') && <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => { setResolveTarget(row); setResolution('accepted') }}>处理</Button>}</Space> },
+    { title: '操作', fixed: 'right', render: (_, row) => <Space><Button size="small" icon={<HistoryOutlined />} onClick={() => void showTimeline(row)}>链路</Button>{row.state === 'prepared' && !row.specimen?.isolated && can('transfer:resolve') && <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => { setResolveTarget(row); setResolution('accepted') }}>处理</Button>}</Space> },
   ]
   return (
     <div className="page-stack">

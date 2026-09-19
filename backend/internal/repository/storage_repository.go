@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"biosample-cold-custody-tracking/backend/internal/constants"
 	"biosample-cold-custody-tracking/backend/internal/dto"
 	"biosample-cold-custody-tracking/backend/internal/model"
 )
@@ -54,6 +55,12 @@ func (r *storageRepository) List(ctx context.Context, filter StorageFilter) ([]m
 	err := db.Preload("Specimens", func(tx *gorm.DB) *gorm.DB {
 		return tx.Order("updated_at DESC").Limit(20)
 	}).Order("active DESC, status ASC, code ASC").Offset((query.Page - 1) * query.PageSize).Limit(query.PageSize).Find(&items).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachAnomalySummary(ctx, items); err != nil {
+		return nil, 0, err
+	}
 	return items, total, err
 }
 
@@ -62,7 +69,58 @@ func (r *storageRepository) Find(ctx context.Context, id uint) (*model.StorageCo
 	err := r.db.WithContext(ctx).Preload("Specimens", func(tx *gorm.DB) *gorm.DB {
 		return tx.Order("position ASC")
 	}).First(&item, id).Error
-	return &item, err
+	if err != nil {
+		return &item, err
+	}
+	if err := r.attachAnomalySummary(ctx, []model.StorageContainer{item}); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// attachAnomalySummary fills the non-persisted open-anomaly reference and
+// isolated specimen count for every container in one batch query.
+func (r *storageRepository) attachAnomalySummary(ctx context.Context, containers []model.StorageContainer) error {
+	if len(containers) == 0 {
+		return nil
+	}
+	ids := make([]uint, 0, len(containers))
+	for _, container := range containers {
+		ids = append(ids, container.ID)
+	}
+	var anomalies []model.TemperatureAnomaly
+	if err := r.db.WithContext(ctx).
+		Where("state = ? AND storage_container_id IN ?", constants.AnomalyStateOpen, ids).
+		Find(&anomalies).Error; err != nil {
+		return err
+	}
+	openByContainer := make(map[uint]model.TemperatureAnomaly, len(anomalies))
+	for _, anomaly := range anomalies {
+		openByContainer[anomaly.StorageContainerID] = anomaly
+	}
+	type countRow struct {
+		ContainerID uint
+		Count       int
+	}
+	var counts []countRow
+	if err := r.db.WithContext(ctx).Model(&model.Specimen{}).
+		Select("storage_container_id AS container_id, count(*) AS count").
+		Where("isolated = ? AND storage_container_id IN ?", true, ids).
+		Group("storage_container_id").Scan(&counts).Error; err != nil {
+		return err
+	}
+	isolatedByContainer := make(map[uint]int, len(counts))
+	for _, row := range counts {
+		isolatedByContainer[row.ContainerID] = row.Count
+	}
+	for index := range containers {
+		if anomaly, ok := openByContainer[containers[index].ID]; ok {
+			anomaly := anomaly
+			containers[index].ActiveAnomaly = &anomaly
+		}
+		containers[index].IsolatedSpecimenCount = isolatedByContainer[containers[index].ID]
+	}
+	return nil
 }
 
 func (r *storageRepository) FindForUpdate(ctx context.Context, tx *gorm.DB, id uint) (*model.StorageContainer, error) {

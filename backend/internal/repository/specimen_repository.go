@@ -18,6 +18,7 @@ type SpecimenFilter struct {
 	State              string `form:"state"`
 	StorageContainerID uint   `form:"storageContainerId"`
 	ProtocolCode       string `form:"protocolCode"`
+	Isolated           *bool  `form:"isolated"`
 }
 
 type SpecimenRepository interface {
@@ -49,6 +50,9 @@ func (r *specimenRepository) List(ctx context.Context, filter SpecimenFilter) ([
 	if protocol := strings.TrimSpace(filter.ProtocolCode); protocol != "" {
 		db = db.Where("protocol_code = ?", strings.ToUpper(protocol))
 	}
+	if filter.Isolated != nil {
+		db = db.Where("isolated = ?", *filter.Isolated)
+	}
 	if search := strings.TrimSpace(query.Search); search != "" {
 		like := "%" + search + "%"
 		db = db.Where("accession_no ILIKE ? OR sample_type ILIKE ? OR subject_code ILIKE ? OR protocol_code ILIKE ? OR current_custodian ILIKE ?", like, like, like, like, like)
@@ -73,6 +77,8 @@ func (r *specimenRepository) Find(ctx context.Context, id uint) (*model.Specimen
 		Preload("Transfers", func(tx *gorm.DB) *gorm.DB { return tx.Order("prepared_at DESC") }).
 		Preload("Transfers.ToContainer").
 		Preload("ProtocolReviews", func(tx *gorm.DB) *gorm.DB { return tx.Order("reviewed_at DESC") }).
+		Preload("IsolationEvents", func(tx *gorm.DB) *gorm.DB { return tx.Order("isolated_at DESC") }).
+		Preload("IsolationEvents.TemperatureAnomaly").
 		First(&item, id).Error
 	return &item, err
 }

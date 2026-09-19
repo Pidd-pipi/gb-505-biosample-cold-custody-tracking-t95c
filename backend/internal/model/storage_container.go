@@ -20,6 +20,9 @@ type StorageContainer struct {
 	Status          string     `gorm:"size:24;index;not null;default:'available'" json:"status"`
 	Active          bool       `gorm:"not null;default:true" json:"active"`
 	Specimens       []Specimen `json:"specimens,omitempty"`
+	// Anomaly summary is populated by the storage repository, not persisted.
+	ActiveAnomaly         *TemperatureAnomaly `gorm:"-" json:"activeAnomaly,omitempty"`
+	IsolatedSpecimenCount int                 `gorm:"-" json:"isolatedSpecimenCount"`
 }
 
 func (c *StorageContainer) Normalize() {

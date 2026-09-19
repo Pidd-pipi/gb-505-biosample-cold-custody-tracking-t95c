@@ -2,6 +2,8 @@ export type SpecimenState = 'received' | 'aliquoted' | 'stored' | 'released' | '
 export type TransferState = 'prepared' | 'accepted' | 'rejected' | 'cancelled'
 export type ReviewDecision = 'approved' | 'hold' | 'rejected'
 export type TemperatureZone = 'minus20' | 'minus80' | 'liquid_nitrogen'
+export type AnomalyState = 'open' | 'resolved' | 'invalid'
+export type IsolationReason = 'temperature_excursion'
 export type Role = 'admin' | 'receiver' | 'custodian' | 'reviewer' | 'auditor'
 
 export interface BaseEntity {
@@ -21,6 +23,8 @@ export interface StorageContainer extends BaseEntity {
   status: 'available' | 'maintenance' | 'alarm'
   active: boolean
   specimens?: Specimen[]
+  activeAnomaly?: TemperatureAnomaly
+  isolatedSpecimenCount: number
 }
 
 export interface Specimen extends BaseEntity {
@@ -35,11 +39,53 @@ export interface Specimen extends BaseEntity {
   volumeMl: number
   aliquotCount: number
   currentCustodian: string
+  isolated: boolean
+  isolationAnomalyId?: number
+  isolatedAt?: string
   receivedAt: string
   expiresAt?: string
   notes?: string
   transfers?: CustodyTransfer[]
   protocolReviews?: ProtocolReview[]
+  isolationEvents?: SpecimenIsolationEvent[]
+}
+
+export interface SpecimenIsolationEvent extends BaseEntity {
+  specimenId: number
+  temperatureAnomalyId: number
+  temperatureAnomaly?: TemperatureAnomaly
+  reason: IsolationReason
+  containerId: number
+  container?: StorageContainer
+  active: boolean
+  isolatedById: number
+  isolatedByName: string
+  isolatedAt: string
+  releasedById?: number
+  releasedByName?: string
+  releasedAt?: string
+  releaseBasis?: string
+  outcome?: string
+}
+
+export interface TemperatureAnomaly extends BaseEntity {
+  anomalyNo: string
+  storageContainerId: number
+  storageContainer?: StorageContainer
+  recordedC: number
+  readingAt: string
+  state: AnomalyState
+  description?: string
+  reportedById: number
+  reportedByName: string
+  reportedAt: string
+  resolvedById?: number
+  resolvedByName?: string
+  resolvedAt?: string
+  recoveredC?: number
+  resolutionBasis?: string
+  isolatedCount: number
+  isolationEvents?: SpecimenIsolationEvent[]
 }
 
 export interface CustodyTransfer extends BaseEntity {

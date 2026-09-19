@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,11 +17,13 @@ import (
 )
 
 var (
-	ErrTransferAlreadyResolved = errors.New("custody transfer is already resolved")
-	ErrSpecimenCustodyChanged  = errors.New("specimen custody changed after transfer preparation")
-	ErrTargetContainerFull     = errors.New("target storage container is not available or is full")
-	ErrPositionOccupied        = errors.New("target storage position is already occupied")
-	ErrTemperatureExcursion    = errors.New("recorded temperature is outside the target container range")
+	ErrTransferAlreadyResolved    = errors.New("custody transfer is already resolved")
+	ErrSpecimenCustodyChanged     = errors.New("specimen custody changed after transfer preparation")
+	ErrTargetContainerFull        = errors.New("target storage container is not available or is full")
+	ErrTargetContainerQuarantined = errors.New("target storage container is quarantined by an open temperature anomaly")
+	ErrPositionOccupied           = errors.New("target storage position is already occupied")
+	ErrTemperatureExcursion       = errors.New("recorded temperature is outside the target container range")
+	ErrSpecimenUnavailable        = errors.New("specimen cannot accept a new transfer")
 )
 
 type TransferFilter struct {
@@ -45,6 +48,9 @@ type TransferRepository interface {
 	Find(context.Context, uint) (*model.CustodyTransfer, error)
 	FindByNumber(context.Context, string) (*model.CustodyTransfer, error)
 	Create(context.Context, *model.CustodyTransfer) error
+	// CreateLocked re-validates prepared-transfer and isolation invariants
+	// against a row-locked specimen so concurrent patrols cannot race.
+	CreateLocked(context.Context, *model.CustodyTransfer) error
 	CountPreparedForSpecimen(context.Context, uint) (int64, error)
 	Resolve(context.Context, uint, TransferResolution) (*model.CustodyTransfer, *model.Specimen, model.Specimen, error)
 }
@@ -94,6 +100,31 @@ func (r *transferRepository) Create(ctx context.Context, item *model.CustodyTran
 	return r.db.WithContext(ctx).Create(item).Error
 }
 
+func (r *transferRepository) CreateLocked(ctx context.Context, item *model.CustodyTransfer) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var specimen model.Specimen
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&specimen, item.SpecimenID).Error; err != nil {
+			return err
+		}
+		if specimen.Isolated {
+			return ErrSpecimenIsolated
+		}
+		if specimen.State.Terminal() {
+			return ErrSpecimenUnavailable
+		}
+		var prepared int64
+		if err := tx.Model(&model.CustodyTransfer{}).
+			Where("specimen_id = ? AND state = ?", item.SpecimenID, constants.TransferStatePrepared).
+			Count(&prepared).Error; err != nil {
+			return err
+		}
+		if prepared > 0 {
+			return ErrSpecimenUnavailable
+		}
+		return tx.Create(item).Error
+	})
+}
+
 func (r *transferRepository) CountPreparedForSpecimen(ctx context.Context, specimenID uint) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.CustodyTransfer{}).
@@ -106,6 +137,25 @@ func (r *transferRepository) Resolve(ctx context.Context, transferID uint, resol
 	var specimen model.Specimen
 	var before model.Specimen
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Read the transfer first without locking to learn which containers are
+		// involved; advisory locks are always taken in ascending id order.
+		if err := tx.First(&transfer, transferID).Error; err != nil {
+			return err
+		}
+		if transfer.State != constants.TransferStatePrepared {
+			return ErrTransferAlreadyResolved
+		}
+		var probe model.Specimen
+		if err := tx.First(&probe, transfer.SpecimenID).Error; err != nil {
+			return err
+		}
+		lockIDs := sortedContainerLockIDs(probe.StorageContainerID, resolution.ToContainerID)
+		for _, lockID := range lockIDs {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", lockID).Error; err != nil {
+				return err
+			}
+		}
+
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&transfer, transferID).Error; err != nil {
 			return err
 		}
@@ -118,6 +168,11 @@ func (r *transferRepository) Resolve(ctx context.Context, transferID uint, resol
 		before = specimen
 		if specimen.CurrentCustodian != transfer.FromCustodian || specimen.LocationLabel() != transfer.FromLocation {
 			return ErrSpecimenCustodyChanged
+		}
+		// A patrol report can quarantine the specimen between preparation and
+		// resolution; isolation forbids every transfer operation.
+		if specimen.Isolated {
+			return ErrSpecimenIsolated
 		}
 
 		transfer.State = resolution.State
@@ -137,6 +192,13 @@ func (r *transferRepository) Resolve(ctx context.Context, transferID uint, resol
 			var target model.StorageContainer
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&target, *transfer.ToContainerID).Error; err != nil {
 				return err
+			}
+			// A container with an open anomaly cannot receive specimens, even
+			// when the specimen merely moves to another slot in that container.
+			if openAnomaly, err := openAnomalyCount(ctx, tx, target.ID); err != nil {
+				return err
+			} else if openAnomaly > 0 {
+				return ErrTargetContainerQuarantined
 			}
 			if !target.CanReceive() && (specimen.StorageContainerID == nil || *specimen.StorageContainerID != target.ID) {
 				return ErrTargetContainerFull
@@ -198,4 +260,32 @@ func (r *transferRepository) Resolve(ctx context.Context, transferID uint, resol
 		return nil, nil, model.Specimen{}, err
 	}
 	return resolved, &specimen, before, nil
+}
+
+// sortedContainerLockIDs returns the advisory-lock ids for the distinct
+// involved containers in ascending order, preventing cross-transaction
+// deadlocks between patrol reports and transfer resolutions.
+func sortedContainerLockIDs(containerIDs ...*uint) []int64 {
+	seen := make(map[uint]struct{})
+	ids := make([]int64, 0, len(containerIDs))
+	for _, containerID := range containerIDs {
+		if containerID == nil || *containerID == 0 {
+			continue
+		}
+		if _, ok := seen[*containerID]; ok {
+			continue
+		}
+		seen[*containerID] = struct{}{}
+		ids = append(ids, containerAdvisoryLockID(*containerID))
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+func openAnomalyCount(ctx context.Context, tx *gorm.DB, containerID uint) (int64, error) {
+	var count int64
+	err := tx.WithContext(ctx).Model(&model.TemperatureAnomaly{}).
+		Where("storage_container_id = ? AND state = ?", containerID, constants.AnomalyStateOpen).
+		Count(&count).Error
+	return count, err
 }

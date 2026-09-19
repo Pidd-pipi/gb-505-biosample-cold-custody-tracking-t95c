@@ -116,6 +116,9 @@ func (s *specimenService) Update(ctx context.Context, actor Actor, id uint, inpu
 		if item.HasPreparedTransfer() {
 			return nil, util.Conflict("样本存在待处理交接，不能直接修改保管人")
 		}
+		if item.Isolated {
+			return nil, util.Conflict("样本处于冷链异常隔离中，禁止变更保管人")
+		}
 		item.CurrentCustodian = *input.CurrentCustodian
 	}
 	if input.ExpiresAt != nil {
@@ -146,6 +149,9 @@ func (s *specimenService) Transition(ctx context.Context, actor Actor, id uint, 
 		return nil, err
 	}
 	before := *current
+	if current.Isolated && next == constants.SpecimenStateDisposed {
+		return nil, util.Conflict("样本处于冷链异常隔离中，禁止销毁；待异常解除后再处置")
+	}
 	if err := constants.ValidateSpecimenTransition(current.State, next); err != nil {
 		return nil, util.Conflict(err.Error())
 	}
@@ -163,6 +169,9 @@ func (s *specimenService) Transition(ctx context.Context, actor Actor, id uint, 
 		}
 		if locked.State != current.State {
 			return util.Conflict("样本状态已被其他请求更新")
+		}
+		if locked.Isolated && next == constants.SpecimenStateDisposed {
+			return util.Conflict("样本处于冷链异常隔离中，禁止销毁")
 		}
 		locked.State = next
 		if next == constants.SpecimenStateDisposed {

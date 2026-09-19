@@ -14,22 +14,26 @@ var protocolCodePattern = regexp.MustCompile(`^[A-Z0-9][A-Z0-9._-]{2,79}$`)
 
 type Specimen struct {
 	Base
-	AccessionNo        string                  `gorm:"size:50;uniqueIndex;not null" json:"accessionNo"`
-	SampleType         string                  `gorm:"size:100;index;not null" json:"sampleType"`
-	SubjectCode        string                  `gorm:"size:80;index;not null" json:"subjectCode"`
-	ProtocolCode       string                  `gorm:"size:80;index;not null" json:"protocolCode"`
-	State              constants.SpecimenState `gorm:"size:20;index;not null;default:'received'" json:"state"`
-	StorageContainerID *uint                   `gorm:"index" json:"storageContainerId,omitempty"`
-	StorageContainer   *StorageContainer       `json:"storageContainer,omitempty"`
-	Position           string                  `gorm:"size:120" json:"position,omitempty"`
-	VolumeML           float64                 `gorm:"type:numeric(12,3);not null" json:"volumeMl"`
-	AliquotCount       int                     `gorm:"not null;default:0" json:"aliquotCount"`
-	CurrentCustodian   string                  `gorm:"size:100;not null" json:"currentCustodian"`
-	ReceivedAt         time.Time               `gorm:"index;not null" json:"receivedAt"`
-	ExpiresAt          *time.Time              `gorm:"index" json:"expiresAt,omitempty"`
-	Notes              string                  `gorm:"size:1000" json:"notes,omitempty"`
-	Transfers          []CustodyTransfer       `json:"transfers,omitempty"`
-	ProtocolReviews    []ProtocolReview        `json:"protocolReviews,omitempty"`
+	AccessionNo        string                   `gorm:"size:50;uniqueIndex;not null" json:"accessionNo"`
+	SampleType         string                   `gorm:"size:100;index;not null" json:"sampleType"`
+	SubjectCode        string                   `gorm:"size:80;index;not null" json:"subjectCode"`
+	ProtocolCode       string                   `gorm:"size:80;index;not null" json:"protocolCode"`
+	State              constants.SpecimenState  `gorm:"size:20;index;not null;default:'received'" json:"state"`
+	StorageContainerID *uint                    `gorm:"index" json:"storageContainerId,omitempty"`
+	StorageContainer   *StorageContainer        `json:"storageContainer,omitempty"`
+	Position           string                   `gorm:"size:120" json:"position,omitempty"`
+	VolumeML           float64                  `gorm:"type:numeric(12,3);not null" json:"volumeMl"`
+	AliquotCount       int                      `gorm:"not null;default:0" json:"aliquotCount"`
+	CurrentCustodian   string                   `gorm:"size:100;not null" json:"currentCustodian"`
+	Isolated           bool                     `gorm:"not null;default:false;index" json:"isolated"`
+	IsolationAnomalyID *uint                    `gorm:"index" json:"isolationAnomalyId,omitempty"`
+	IsolatedAt         *time.Time               `gorm:"index" json:"isolatedAt,omitempty"`
+	ReceivedAt         time.Time                `gorm:"index;not null" json:"receivedAt"`
+	ExpiresAt          *time.Time               `gorm:"index" json:"expiresAt,omitempty"`
+	Notes              string                   `gorm:"size:1000" json:"notes,omitempty"`
+	Transfers          []CustodyTransfer        `json:"transfers,omitempty"`
+	ProtocolReviews    []ProtocolReview         `json:"protocolReviews,omitempty"`
+	IsolationEvents    []SpecimenIsolationEvent `json:"isolationEvents,omitempty"`
 }
 
 func (s *Specimen) Normalize() {
@@ -125,4 +129,9 @@ func (s Specimen) HasPreparedTransfer() bool {
 		}
 	}
 	return false
+}
+
+// InColdStorage reports whether the specimen currently occupies a freezer slot.
+func (s Specimen) InColdStorage() bool {
+	return s.State == constants.SpecimenStateStored && s.StorageContainerID != nil && s.Position != ""
 }
