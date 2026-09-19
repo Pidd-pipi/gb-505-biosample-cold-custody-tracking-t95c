@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { specimenAPI } from '../api'
 import { CustodyBadge } from '../components/common/CustodyBadge'
 import { EntityTable } from '../components/common/EntityTable'
+import { QuarantineTag } from '../components/common/QuarantineTag'
 import { SampleDrawer } from '../components/common/SampleDrawer'
 import { useAuth } from '../hooks/useAuth'
 import { usePagination } from '../hooks/usePagination'
@@ -57,7 +58,7 @@ export function SpecimensPage() {
     { title: '样本类型', dataIndex: 'sampleType' },
     { title: '受试者编码', dataIndex: 'subjectCode' },
     { title: '协议', dataIndex: 'protocolCode' },
-    { title: '状态', dataIndex: 'state', render: (value) => <CustodyBadge state={value} /> },
+    { title: '状态', dataIndex: 'state', render: (value, row) => <Space direction="vertical" size={0}><CustodyBadge state={value} />{row.quarantineAnomalyId ? <QuarantineTag specimen={row} /> : null}</Space> },
     { title: '冻存位置', render: (_, row) => row.storageContainer ? `${row.storageContainer.code} / ${row.position || '-'}` : '待分配' },
     { title: '当前保管人', dataIndex: 'currentCustodian' },
     { title: '体积/分装', render: (_, row) => `${row.volumeMl} mL / ${row.aliquotCount} 份` },

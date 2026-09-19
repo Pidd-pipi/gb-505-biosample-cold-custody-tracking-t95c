@@ -73,6 +73,17 @@ func (r *protocolRepository) Create(ctx context.Context, review *model.ProtocolR
 	var specimen model.Specimen
 	var before model.Specimen
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 批准放行需要占用量回写，先无锁读取容器 ID 以按「容器优先」加锁，避免与异常建单交叉死锁。
+		var probe model.Specimen
+		if err := tx.Select("id", "storage_container_id").First(&probe, review.SpecimenID).Error; err != nil {
+			return err
+		}
+		if review.Decision == constants.DecisionApproved && probe.StorageContainerID != nil {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				First(&model.StorageContainer{}, *probe.StorageContainerID).Error; err != nil {
+				return err
+			}
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&specimen, review.SpecimenID).Error; err != nil {
 			return err
 		}
@@ -83,6 +94,10 @@ func (r *protocolRepository) Create(ctx context.Context, review *model.ProtocolR
 		if review.Decision == constants.DecisionApproved {
 			if specimen.State != constants.SpecimenStateStored {
 				return ErrSpecimenNotReviewable
+			}
+			// 隔离样本禁止批准放行；暂缓与拒绝仍然允许。
+			if specimen.QuarantineAnomalyID != nil && *specimen.QuarantineAnomalyID > 0 {
+				return ErrSpecimenQuarantined
 			}
 			if specimen.StorageContainerID != nil {
 				if err := tx.Model(&model.StorageContainer{}).Where("id = ?", *specimen.StorageContainerID).

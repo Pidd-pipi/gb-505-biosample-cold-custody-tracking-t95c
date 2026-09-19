@@ -20,6 +20,11 @@ type StorageContainer struct {
 	Status          string     `gorm:"size:24;index;not null;default:'available'" json:"status"`
 	Active          bool       `gorm:"not null;default:true" json:"active"`
 	Specimens       []Specimen `json:"specimens,omitempty"`
+	// OpenAnomalyID / AnomalyStatus / IsolatedSpecimenCount 为非持久化计算字段，
+	// 由仓储层在查询时填充，用于冻存页展示未结异常与涉及样本数。
+	OpenAnomalyID         *uint  `gorm:"-" json:"openAnomalyId,omitempty"`
+	AnomalyStatus         string `gorm:"-" json:"anomalyStatus,omitempty"`
+	IsolatedSpecimenCount int    `gorm:"-" json:"isolatedSpecimenCount,omitempty"`
 }
 
 func (c *StorageContainer) Normalize() {
@@ -90,6 +95,11 @@ func (c StorageContainer) AvailableSlots() int {
 
 func (c StorageContainer) CanReceive() bool {
 	return c.Active && c.Status == "available" && c.AvailableSlots() > 0
+}
+
+// HasOpenAnomaly 报告容器当前是否挂有未结冷链异常。
+func (c StorageContainer) HasOpenAnomaly() bool {
+	return c.OpenAnomalyID != nil && *c.OpenAnomalyID > 0
 }
 
 func (c StorageContainer) AcceptsTemperature(value float64) bool {

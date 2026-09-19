@@ -11,6 +11,8 @@ export const actionLabels: Record<string, string> = {
   'custody_transfer.prepared': '发起交接', 'custody_transfer.accepted': '接收交接',
   'custody_transfer.rejected': '拒绝交接', 'custody_transfer.cancelled': '取消交接',
   'protocol_review.created': '完成协议复核',
+  'temperature_anomaly.reported': '上报冷链异常', 'temperature_anomaly.released': '解除冷链异常',
+  'specimen.quarantined': '样本转入隔离', 'specimen.quarantine_released': '样本解除隔离',
 }
 
 export const temperatureLabels: Record<string, string> = {

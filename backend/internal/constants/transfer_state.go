@@ -55,6 +55,7 @@ const (
 
 var permissionOrder = []string{
 	"storage:write",
+	"anomaly:manage",
 	"specimen:create",
 	"specimen:update",
 	"specimen:transition",
@@ -73,6 +74,7 @@ var roleGrants = map[Role]map[string]struct{}{
 	},
 	RoleCustodian: {
 		"storage:write":       {},
+		"anomaly:manage":      {},
 		"specimen:update":     {},
 		"specimen:transition": {},
 		"transfer:prepare":    {},

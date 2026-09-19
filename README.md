@@ -7,7 +7,8 @@
 1. 接收专员登记样本接收号、脱敏受试者编码、来源协议、体积和当前保管人。
 2. 保管员维护冷冻柜或液氮罐，发起交接并由另一名有权限的人员接收；接收成功后样本位置、格位、状态和容器占用量在同一事务内更新。
 3. 协议复核员核验知情同意、使用范围、保留期限和可选的 MinIO 协议文件对象。通过复核会放行已冻存样本，暂缓或拒绝必须填写说明。
-4. 所有关键写操作记录请求 ID、操作者、前后状态、前后位置和保管人，并使用 SHA-256 前向哈希形成只追加审计链。
+4. 保管员巡检提交超限读数后，系统建立未结冷链异常单，并把该冻存容器内全部已冻存样本转为隔离；同一容器只允许一张未结单。隔离样本禁止发起交接和批准放行，仍可暂缓或拒绝复核；交接到异常容器会自动隔离，杜绝漏隔离。温度恢复不会自动解除，必须由非建单人填写依据后解除，解除失败时异常单与全部样本保持原状。
+5. 所有关键写操作记录请求 ID、操作者、前后状态、前后位置和保管人，并使用 SHA-256 前向哈希形成只追加审计链。
 
 首次启动会幂等创建 3 个冻存容器、4 份样本、2 条交接记录和 1 条协议复核记录，便于直接验证完整流程。
 
@@ -57,7 +58,7 @@ curl http://localhost:19505/healthz
 | --- | --- | --- | --- |
 | `admin` | `admin123` | 样本库管理员 | 全部权限 |
 | `receiver` | `receive123` | 样本接收员 | 接收/更新/变更样本、发起交接 |
-| `custodian` | `custody123` | 冻存保管员 | 容器、样本状态、发起和处理交接 |
+| `custodian` | `custody123` | 冻存保管员 | 容器、样本状态、发起和处理交接、冷链异常巡检与解除 |
 | `reviewer` | `review123` | 协议复核员 | 协议复核、读取审计 |
 | `auditor` | `audit123` | 链路审计员 | 只读审计 |
 
@@ -94,6 +95,9 @@ docker compose down -v
 | `POST /api/custody-transfers/:id/resolve` | 接收、拒绝或取消交接 | `transfer:resolve` |
 | `GET /api/protocol-reviews[/:id]` | 查询协议复核 | 已登录 |
 | `POST /api/protocol-reviews` | 提交协议复核 | `protocol:review` |
+| `GET /api/temperature-anomalies[/:id]` | 查询冷链异常与隔离记录 | 已登录 |
+| `POST /api/temperature-anomalies` | 巡检提交超限读数并隔离已冻存样本 | `anomaly:manage` |
+| `POST /api/temperature-anomalies/:id/release` | 非建单人填写依据解除异常 | `anomaly:manage` |
 | `GET /api/audit-logs` | 查询只追加审计事件 | `audit:read` |
 
 登录和创建容器示例：
@@ -153,9 +157,13 @@ docker compose config --quiet
 
 `TransferState` 固定为 `prepared`、`accepted`、`rejected`、`cancelled`。
 
-- 后端：`internal/constants/transfer_state.go`、`internal/dto/transfer_review.go`、`internal/model/custody_transfer.go`、`internal/model/specimen.go`、`internal/repository/specimen_repository.go`、`internal/repository/transfer_repository.go`、`internal/service/transfer_service.go`、`internal/util/database.go`
-- 前端：`src/types/domain.ts`、`src/api/index.ts`、`src/stores/transferStore.ts`、`src/components/common/CustodyBadge.tsx`、`src/components/common/CustodyTimeline.tsx`、`src/pages/TransfersPage.tsx`
-- 测试：`internal/constants/specimen_state_test.go`、`internal/model/quality_rules_test.go`
+`AnomalyState` 固定为 `open`、`released`；隔离动作 `QuarantineAction` 固定为 `isolated`、`released`。
+
+- 后端：`internal/constants/anomaly_state.go`、`internal/model/temperature_anomaly.go`、`internal/model/specimen_quarantine.go`、`internal/model/specimen.go`、`internal/model/storage_container.go`、`internal/dto/anomaly.go`、`internal/repository/anomaly_repository.go`、`internal/repository/transfer_repository.go`、`internal/repository/protocol_repository.go`、`internal/repository/specimen_repository.go`、`internal/service/anomaly_service.go`、`internal/handler/anomaly_handler.go`、`internal/util/database.go`
+- 前端：`src/types/domain.ts`、`src/api/index.ts`、`src/stores/anomalyStore.ts`、`src/components/common/AnomalyPanel.tsx`、`src/components/common/QuarantineTag.tsx`、`src/components/common/StatusBadge.tsx`、`src/components/common/SampleDrawer.tsx`、`src/pages/AnomaliesPage.tsx`、`src/pages/StoragePage.tsx`、`src/pages/SpecimenDetailPage.tsx`、`src/pages/TransfersPage.tsx`、`src/pages/ProtocolsPage.tsx`
+- 测试：`internal/constants/anomaly_state_test.go`、`internal/model/anomaly_rules_test.go`、`internal/integration/anomaly_flow_test.go`（需 `TEST_DATABASE_URL`，以 `-tags=integration` 运行）
+
+冷链异常并发一致性由「容器行锁优先（多容器按 id 升序）→ 异常 → 样本」的统一加锁顺序，以及 `temperature_anomalies` 上 `(storage_container_id) WHERE status='open'` 的部分唯一索引共同保证；建单、解除、交接和放行均在数据库事务内完成，失败整体回滚。
 
 修改枚举时必须同步更新上述位置、数据库兼容策略、测试和 README。
 

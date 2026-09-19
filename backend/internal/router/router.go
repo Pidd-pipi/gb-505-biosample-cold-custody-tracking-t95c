@@ -25,13 +25,15 @@ func Build(db *gorm.DB, redisClient *redis.Client, objectStore *minio.Client, cf
 	specimenRepo := repository.NewSpecimenRepository(db)
 	transferRepo := repository.NewTransferRepository(db)
 	protocolRepo := repository.NewProtocolRepository(db)
+	anomalyRepo := repository.NewAnomalyRepository(db)
 
 	auditService := service.NewAuditService(auditRepo)
 	authService := service.NewAuthService(userRepo, cfg.JWTSecret, cfg.TokenTTL)
-	storageService := service.NewStorageService(storageRepo, auditService)
+	storageService := service.NewStorageService(storageRepo, anomalyRepo, auditService)
 	specimenService := service.NewSpecimenService(specimenRepo, auditService)
 	transferService := service.NewTransferService(transferRepo, specimenRepo, auditService)
 	protocolService := service.NewProtocolService(protocolRepo, specimenRepo, transferRepo, auditService, objectStore, cfg.MinIOBucket)
+	anomalyService := service.NewAnomalyService(anomalyRepo, storageRepo, auditService)
 
 	if err := authService.Seed(context.Background()); err != nil {
 		return nil, err
@@ -42,6 +44,7 @@ func Build(db *gorm.DB, redisClient *redis.Client, objectStore *minio.Client, cf
 	specimenHandler := handler.NewSpecimenHandler(specimenService)
 	transferHandler := handler.NewTransferHandler(transferService)
 	protocolHandler := handler.NewProtocolHandler(protocolService)
+	anomalyHandler := handler.NewAnomalyHandler(anomalyService)
 	auditHandler := handler.NewAuditHandler(auditService)
 
 	engine := gin.New()
@@ -78,6 +81,11 @@ func Build(db *gorm.DB, redisClient *redis.Client, objectStore *minio.Client, cf
 	secured.GET("/protocol-reviews", protocolHandler.List)
 	secured.GET("/protocol-reviews/:id", protocolHandler.Get)
 	secured.POST("/protocol-reviews", middleware.RequirePermission("protocol:review"), protocolHandler.Review)
+
+	secured.GET("/temperature-anomalies", anomalyHandler.List)
+	secured.GET("/temperature-anomalies/:id", anomalyHandler.Get)
+	secured.POST("/temperature-anomalies", middleware.RequirePermission("anomaly:manage"), anomalyHandler.Report)
+	secured.POST("/temperature-anomalies/:id/release", middleware.RequirePermission("anomaly:manage"), anomalyHandler.Release)
 	secured.GET("/audit-logs", middleware.RequirePermission("audit:read"), auditHandler.List)
 
 	engine.NoRoute(func(c *gin.Context) {

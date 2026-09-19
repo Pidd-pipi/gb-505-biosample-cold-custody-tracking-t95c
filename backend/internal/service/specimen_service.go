@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"biosample-cold-custody-tracking/backend/internal/constants"
 	"biosample-cold-custody-tracking/backend/internal/dto"
@@ -116,6 +117,9 @@ func (s *specimenService) Update(ctx context.Context, actor Actor, id uint, inpu
 		if item.HasPreparedTransfer() {
 			return nil, util.Conflict("样本存在待处理交接，不能直接修改保管人")
 		}
+		if item.Isolated() {
+			return nil, util.Conflict("样本处于冷链异常隔离状态，不能变更保管人")
+		}
 		item.CurrentCustodian = *input.CurrentCustodian
 	}
 	if input.ExpiresAt != nil {
@@ -157,6 +161,13 @@ func (s *specimenService) Transition(ctx context.Context, actor Actor, id uint, 
 		return nil, util.Conflict("样本必须通过交接受理进入冻存位置")
 	}
 	err = s.repo.Transaction(ctx, func(tx *gorm.DB) error {
+		// 处置会回写容器占用量，按「容器优先」加锁，与异常建单/解除保持一致以避免交叉死锁。
+		if next == constants.SpecimenStateDisposed && current.StorageContainerID != nil {
+			if lockErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				First(&model.StorageContainer{}, *current.StorageContainerID).Error; lockErr != nil {
+				return lockErr
+			}
+		}
 		locked, lockErr := s.repo.FindForUpdate(ctx, tx, id)
 		if lockErr != nil {
 			return lockErr
@@ -174,6 +185,7 @@ func (s *specimenService) Transition(ctx context.Context, actor Actor, id uint, 
 			}
 			locked.StorageContainerID = nil
 			locked.Position = ""
+			locked.QuarantineAnomalyID = nil
 			locked.Notes = strings.TrimSpace(locked.Notes + "\n销毁原因: " + reason)
 		}
 		locked.Normalize()

@@ -3,6 +3,8 @@ export type TransferState = 'prepared' | 'accepted' | 'rejected' | 'cancelled'
 export type ReviewDecision = 'approved' | 'hold' | 'rejected'
 export type TemperatureZone = 'minus20' | 'minus80' | 'liquid_nitrogen'
 export type Role = 'admin' | 'receiver' | 'custodian' | 'reviewer' | 'auditor'
+export type AnomalyState = 'open' | 'released'
+export type QuarantineAction = 'isolated' | 'released'
 
 export interface BaseEntity {
   id: number
@@ -21,6 +23,44 @@ export interface StorageContainer extends BaseEntity {
   status: 'available' | 'maintenance' | 'alarm'
   active: boolean
   specimens?: Specimen[]
+  openAnomalyId?: number
+  anomalyStatus?: AnomalyState
+  isolatedSpecimenCount?: number
+}
+
+export interface SpecimenQuarantine {
+  id: number
+  createdAt: string
+  specimenId: number
+  specimen?: Specimen
+  anomalyId: number
+  anomaly?: TemperatureAnomaly
+  action: QuarantineAction
+  storageContainerId: number
+  storageContainer?: StorageContainer
+  operatorId: number
+  operatorName: string
+  reason?: string
+}
+
+export interface TemperatureAnomaly extends BaseEntity {
+  anomalyNo: string
+  storageContainerId: number
+  storageContainer?: StorageContainer
+  temperatureC: number
+  zoneLowerC: number
+  zoneUpperC: number
+  inspectedAt: string
+  description?: string
+  status: AnomalyState
+  affectedCount: number
+  reportedById: number
+  reportedByName: string
+  releasedById?: number
+  releasedByName?: string
+  releaseBasis?: string
+  releasedAt?: string
+  quarantineEvents?: SpecimenQuarantine[]
 }
 
 export interface Specimen extends BaseEntity {
@@ -38,6 +78,9 @@ export interface Specimen extends BaseEntity {
   receivedAt: string
   expiresAt?: string
   notes?: string
+  quarantineAnomalyId?: number
+  quarantineAnomaly?: TemperatureAnomaly
+  quarantineHistory?: SpecimenQuarantine[]
   transfers?: CustodyTransfer[]
   protocolReviews?: ProtocolReview[]
 }

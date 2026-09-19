@@ -58,9 +58,14 @@ func (r *specimenRepository) List(ctx context.Context, filter SpecimenFilter) ([
 		return nil, 0, err
 	}
 	items := make([]model.Specimen, 0)
-	err := db.Preload("StorageContainer").Preload("Transfers", func(tx *gorm.DB) *gorm.DB {
-		return tx.Order("prepared_at DESC").Limit(10)
-	}).Preload("ProtocolReviews", func(tx *gorm.DB) *gorm.DB {
+	err := db.Preload("StorageContainer").
+		Preload("QuarantineAnomaly").
+		Preload("QuarantineHistory", func(tx *gorm.DB) *gorm.DB {
+			return tx.Order("created_at DESC, id DESC").Limit(20)
+		}).
+		Preload("Transfers", func(tx *gorm.DB) *gorm.DB {
+			return tx.Order("prepared_at DESC").Limit(10)
+		}).Preload("ProtocolReviews", func(tx *gorm.DB) *gorm.DB {
 		return tx.Order("reviewed_at DESC").Limit(10)
 	}).Order("received_at DESC, id DESC").Offset((query.Page - 1) * query.PageSize).Limit(query.PageSize).Find(&items).Error
 	return items, total, err
@@ -70,6 +75,11 @@ func (r *specimenRepository) Find(ctx context.Context, id uint) (*model.Specimen
 	var item model.Specimen
 	err := r.db.WithContext(ctx).
 		Preload("StorageContainer").
+		Preload("QuarantineAnomaly").
+		Preload("QuarantineAnomaly.StorageContainer").
+		Preload("QuarantineHistory", func(tx *gorm.DB) *gorm.DB { return tx.Order("created_at DESC, id DESC") }).
+		Preload("QuarantineHistory.StorageContainer").
+		Preload("QuarantineHistory.Anomaly").
 		Preload("Transfers", func(tx *gorm.DB) *gorm.DB { return tx.Order("prepared_at DESC") }).
 		Preload("Transfers.ToContainer").
 		Preload("ProtocolReviews", func(tx *gorm.DB) *gorm.DB { return tx.Order("reviewed_at DESC") }).

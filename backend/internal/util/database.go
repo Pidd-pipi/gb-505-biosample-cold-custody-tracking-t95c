@@ -87,9 +87,19 @@ func Migrate(db *gorm.DB) error {
 		&model.Specimen{},
 		&model.CustodyTransfer{},
 		&model.ProtocolReview{},
+		&model.TemperatureAnomaly{},
+		&model.SpecimenQuarantine{},
 		&model.AuditLog{},
 	); err != nil {
 		return err
+	}
+	// 同一冻存容器至多存在一张未结温度异常，作为并发巡检提交的最终兜底。
+	const openAnomalyUniqueIndex = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_temperature_anomaly_one_open_per_container
+ON temperature_anomalies (storage_container_id)
+WHERE status = 'open';`
+	if err := db.Exec(openAnomalyUniqueIndex).Error; err != nil {
+		return fmt.Errorf("create open anomaly unique index: %w", err)
 	}
 	const immutableAuditFunction = `
 CREATE OR REPLACE FUNCTION reject_audit_log_mutation()

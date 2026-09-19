@@ -1,5 +1,5 @@
-import { EyeOutlined, FileProtectOutlined, HistoryOutlined } from '@ant-design/icons'
-import { Button, Checkbox, Col, DatePicker, Form, Input, Modal, Radio, Row, Segmented, Space, Typography, message } from 'antd'
+import { EyeOutlined, FileProtectOutlined, HistoryOutlined, StopOutlined } from '@ant-design/icons'
+import { Alert, Button, Checkbox, Col, DatePicker, Form, Input, Modal, Radio, Row, Segmented, Space, Tooltip, Typography, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import { useEffect, useState } from 'react'
 import { protocolAPI, specimenAPI } from '../api'
@@ -57,9 +57,9 @@ export function ProtocolsPage() {
     { title: '样本', dataIndex: 'accessionNo', render: (value, row) => <Button type="link" className="table-link" onClick={() => void show(row)}>{value}</Button> },
     { title: '样本类型', dataIndex: 'sampleType' },
     { title: '来源协议', dataIndex: 'protocolCode' },
-    { title: '保管状态', dataIndex: 'state', render: (value) => <CustodyBadge state={value} /> },
+    { title: '保管状态', dataIndex: 'state', render: (value, row) => <Space direction="vertical" size={0}><CustodyBadge state={value} />{row.quarantineAnomalyId && <Tooltip title="冷链异常隔离中，禁止批准放行；可暂缓或拒绝"><Typography.Text type="danger"><StopOutlined /> 隔离中</Typography.Text></Tooltip>}</Space> },
     { title: '已复核次数', render: (_, row) => row.protocolReviews?.length || 0 },
-    { title: '操作', fixed: 'right', render: (_, row) => <Space><Button size="small" icon={<EyeOutlined />} onClick={() => void show(row)}>样本详情</Button>{can('protocol:review') && <Button size="small" type="primary" icon={<FileProtectOutlined />} onClick={() => { setReviewTarget(row); form.setFieldsValue({ decision: row.state === 'stored' ? 'approved' : 'hold', consentVerified: false, scopeVerified: false }) }}>复核</Button>}</Space> },
+    { title: '操作', fixed: 'right', render: (_, row) => <Space><Button size="small" icon={<EyeOutlined />} onClick={() => void show(row)}>样本详情</Button>{can('protocol:review') && <Button size="small" type="primary" icon={<FileProtectOutlined />} onClick={() => { setReviewTarget(row); form.setFieldsValue({ decision: (row.state === 'stored' && !row.quarantineAnomalyId) ? 'approved' : 'hold', consentVerified: false, scopeVerified: false }) }}>复核</Button>}</Space> },
   ]
   const reviewColumns: ColumnsType<ProtocolReview> = [
     { title: '样本', render: (_, row) => row.specimen?.accessionNo || row.specimenId },
@@ -77,7 +77,7 @@ export function ProtocolsPage() {
       <header className="page-header"><div><Typography.Title level={2}>协议复核</Typography.Title><Typography.Text type="secondary">核对知情同意、研究使用范围、样本保留期和协议文件</Typography.Text></div><Segmented value={mode} onChange={(value) => setMode(value as typeof mode)} options={[{ value: 'queue', label: '样本待复核', icon: <FileProtectOutlined /> }, { value: 'history', label: '复核记录', icon: <HistoryOutlined /> }]} /></header>
       {mode === 'queue' ? <EntityTable columns={specimenColumns} dataSource={specimens} loading={loading} pagination={{ pageSize: 10 }} emptyTitle="暂无可复核样本" /> : <EntityTable columns={reviewColumns} dataSource={reviews.data.items} loading={reviews.loading} pagination={{ pageSize: 10 }} emptyTitle="暂无协议复核记录" />}
       <Modal width={680} title={`协议复核 · ${reviewTarget?.accessionNo || ''}`} open={Boolean(reviewTarget)} confirmLoading={saving} onOk={() => void submit()} onCancel={() => setReviewTarget(null)} okText="提交复核" cancelText="取消">
-        <Form form={form} layout="vertical"><Form.Item label="复核决定" name="decision" rules={[{ required: true }]}><Radio.Group optionType="button" buttonStyle="solid" options={[{ value: 'approved', label: '通过' }, { value: 'hold', label: '暂缓' }, { value: 'rejected', label: '拒绝' }]} /></Form.Item><Row gutter={16}><Col span={12}><Form.Item name="consentVerified" valuePropName="checked"><Checkbox>已核验有效知情同意</Checkbox></Form.Item></Col><Col span={12}><Form.Item name="scopeVerified" valuePropName="checked"><Checkbox>样本用途符合协议范围</Checkbox></Form.Item></Col></Row><Form.Item name="retentionUntil" label="样本保留期限"><DatePicker showTime style={{ width: '100%' }} /></Form.Item><Form.Item name="documentObjectKey" label="MinIO 协议文件对象键"><Input placeholder="protocols/PR-2026/consent-v2.pdf" /></Form.Item><Form.Item name="notes" label="复核说明" rules={[{ required: true, min: 5 }]}><Input.TextArea rows={4} maxLength={1000} showCount /></Form.Item></Form>
+        <Form form={form} layout="vertical">{reviewTarget?.quarantineAnomalyId ? <Alert type="error" showIcon style={{ marginBottom: 12 }} message="样本处于冷链异常隔离状态，禁止批准放行；可选择暂缓或拒绝复核。" /> : null}<Form.Item label="复核决定" name="decision" rules={[{ required: true }]}><Radio.Group optionType="button" buttonStyle="solid" options={[{ value: 'approved', label: '通过', disabled: Boolean(reviewTarget?.quarantineAnomalyId) }, { value: 'hold', label: '暂缓' }, { value: 'rejected', label: '拒绝' }]} /></Form.Item><Row gutter={16}><Col span={12}><Form.Item name="consentVerified" valuePropName="checked"><Checkbox>已核验有效知情同意</Checkbox></Form.Item></Col><Col span={12}><Form.Item name="scopeVerified" valuePropName="checked"><Checkbox>样本用途符合协议范围</Checkbox></Form.Item></Col></Row><Form.Item name="retentionUntil" label="样本保留期限"><DatePicker showTime style={{ width: '100%' }} /></Form.Item><Form.Item name="documentObjectKey" label="MinIO 协议文件对象键"><Input placeholder="protocols/PR-2026/consent-v2.pdf" /></Form.Item><Form.Item name="notes" label="复核说明" rules={[{ required: true, min: 5 }]}><Input.TextArea rows={4} maxLength={1000} showCount /></Form.Item></Form>
       </Modal>
       <SampleDrawer specimen={drawerSpecimen} open={Boolean(drawerSpecimen)} onClose={() => setDrawerSpecimen(null)} />
     </div>

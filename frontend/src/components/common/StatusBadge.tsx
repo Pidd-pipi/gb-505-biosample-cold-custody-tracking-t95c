@@ -4,11 +4,15 @@ const colors: Record<string, string> = {
   available: 'success', maintenance: 'warning', alarm: 'error',
   approved: 'success', hold: 'warning', rejected: 'error',
   minus20: 'cyan', minus80: 'blue', liquid_nitrogen: 'purple',
+  open: 'error', released: 'default',
+  isolated: 'error',
 }
 const labels: Record<string, string> = {
   available: '可用', maintenance: '维护中', alarm: '温度告警',
   approved: '通过', hold: '暂缓', rejected: '拒绝',
   minus20: '-20°C', minus80: '-80°C', liquid_nitrogen: '液氮区',
+  open: '异常隔离中', released: '已解除',
+  isolated: '已隔离',
 }
 
 export function StatusBadge({ value, dot = false }: { value: string; dot?: boolean }) {

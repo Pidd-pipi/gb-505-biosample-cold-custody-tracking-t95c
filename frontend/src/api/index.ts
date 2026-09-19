@@ -1,7 +1,7 @@
 import { apiClient, unwrap } from './client'
 import type {
-  AuditLog, CustodyTransfer, PageResult, ProtocolReview, ReviewDecision,
-  Specimen, SpecimenState, StorageContainer, TransferState, User,
+  AnomalyState, AuditLog, CustodyTransfer, PageResult, ProtocolReview, ReviewDecision,
+  Specimen, SpecimenState, StorageContainer, TemperatureAnomaly, TransferState, User,
 } from '../types/domain'
 
 export interface PageParams { page?: number; pageSize?: number; search?: string }
@@ -62,4 +62,14 @@ export const protocolAPI = {
 export const auditAPI = {
   list: (params: PageParams & { entityType?: string; actorId?: number } = {}) =>
     unwrap<PageResult<AuditLog>>(apiClient.get('/audit-logs', { params })),
+}
+
+export const anomalyAPI = {
+  list: (params: PageParams & { status?: AnomalyState; storageContainerId?: number } = {}) =>
+    unwrap<PageResult<TemperatureAnomaly>>(apiClient.get('/temperature-anomalies', { params })),
+  get: (id: number) => unwrap<TemperatureAnomaly>(apiClient.get(`/temperature-anomalies/${id}`)),
+  report: (payload: { storageContainerId: number; temperatureC: number; inspectedAt?: string; description?: string }) =>
+    unwrap<TemperatureAnomaly>(apiClient.post('/temperature-anomalies', payload)),
+  release: (id: number, releaseBasis: string) =>
+    unwrap<TemperatureAnomaly>(apiClient.post(`/temperature-anomalies/${id}/release`, { releaseBasis })),
 }

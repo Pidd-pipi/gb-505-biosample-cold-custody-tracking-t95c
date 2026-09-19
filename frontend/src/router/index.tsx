@@ -2,6 +2,7 @@ import { Navigate, Outlet, createBrowserRouter, useLocation } from 'react-router
 import { AppShell } from '../components/common/AppShell'
 import { useAuth } from '../hooks/useAuth'
 import { AuditPage } from '../pages/AuditPage'
+import { AnomaliesPage } from '../pages/AnomaliesPage'
 import { SpecimenDetailPage } from '../pages/SpecimenDetailPage'
 import { SpecimensPage } from '../pages/SpecimensPage'
 import { TransfersPage } from '../pages/TransfersPage'
@@ -31,6 +32,7 @@ export const router = createBrowserRouter([
         { path: '/specimens', element: <SpecimensPage /> },
         { path: '/specimens/:id', element: <SpecimenDetailPage /> },
         { path: '/storage', element: <StoragePage /> },
+        { path: '/anomalies', element: <AnomaliesPage /> },
         { path: '/transfers', element: <TransfersPage /> },
         { path: '/protocols', element: <ProtocolsPage /> },
         {

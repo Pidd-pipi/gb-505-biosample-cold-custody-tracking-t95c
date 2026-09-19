@@ -57,6 +57,9 @@ func (s *transferService) Create(ctx context.Context, actor Actor, input dto.Cre
 	if specimen.State.Terminal() {
 		return nil, util.Conflict("已放行或已销毁样本不能发起交接")
 	}
+	if specimen.Isolated() {
+		return nil, util.Conflict("样本处于冷链异常隔离状态，禁止发起交接")
+	}
 	prepared, err := s.repo.CountPreparedForSpecimen(ctx, specimen.ID)
 	if err != nil {
 		return nil, err
@@ -95,7 +98,16 @@ func (s *transferService) Create(ctx context.Context, actor Actor, input dto.Cre
 		return nil, util.BadRequest(err.Error())
 	}
 	if err := s.repo.Create(ctx, item); err != nil {
-		return nil, err
+		switch {
+		case errors.Is(err, repository.ErrSpecimenQuarantined):
+			return nil, util.Conflict("样本处于冷链异常隔离状态，禁止发起交接")
+		case errors.Is(err, repository.ErrPreparedTransferExists):
+			return nil, util.Conflict("该样本已有待处理交接")
+		case errors.Is(err, repository.ErrSpecimenCustodyChanged):
+			return nil, util.Conflict("样本状态已变化，不能发起交接")
+		default:
+			return nil, err
+		}
 	}
 	if err := s.audit.Record(ctx, actor, "custody_transfer.prepared", "CustodyTransfer", item.ID, nil, item); err != nil {
 		return nil, err
@@ -147,7 +159,7 @@ func (s *transferService) Resolve(ctx context.Context, actor Actor, id uint, inp
 		ResolvedByName: actor.Name,
 		ResolvedAt:     time.Now().UTC(),
 	}
-	resolved, specimen, specimenBefore, err := s.repo.Resolve(ctx, id, resolution)
+	resolved, specimen, specimenBefore, quarantineResults, err := s.repo.Resolve(ctx, id, resolution)
 	if err != nil {
 		return nil, mapTransferError(err)
 	}
@@ -157,6 +169,12 @@ func (s *transferService) Resolve(ctx context.Context, actor Actor, id uint, inp
 	if input.State == constants.TransferStateAccepted {
 		if err := s.audit.Record(ctx, actor, "specimen.relocated", "Specimen", specimen.ID, specimenBefore, specimen); err != nil {
 			return nil, err
+		}
+		// 调入未结异常容器导致的自动隔离必须留痕，与样本状态同步。
+		for _, result := range quarantineResults {
+			if err := s.audit.Record(ctx, actor, "specimen.quarantined", "Specimen", result.After.ID, result.Before, result.After); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return resolved, nil
@@ -174,6 +192,10 @@ func mapTransferError(err error) error {
 		return util.Conflict("目标冻存位置已被占用")
 	case errors.Is(err, repository.ErrTemperatureExcursion):
 		return util.Conflict("交接温度超出目标容器温区")
+	case errors.Is(err, repository.ErrSpecimenQuarantined):
+		return util.Conflict("样本处于冷链异常隔离状态，禁止交接")
+	case errors.Is(err, repository.ErrPreparedTransferExists):
+		return util.Conflict("该样本已有待处理交接")
 	default:
 		return err
 	}

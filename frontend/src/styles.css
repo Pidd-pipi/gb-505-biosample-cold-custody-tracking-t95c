@@ -59,3 +59,6 @@ button, input, textarea, select { font: inherit; letter-spacing: 0; }
   .table-toolbar { flex-wrap: wrap; }
   .table-toolbar .ant-input-affix-wrapper { width: 100%; }
 }
+
+.quarantine-tag { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 1px 8px; border-radius: 4px; background: #fff1f0; color: #cf1322; border: 1px solid #ffa39e; font-size: 12px; line-height: 20px; white-space: nowrap; }
+.drawer-stack { display: flex; flex-direction: column; gap: 12px; }
